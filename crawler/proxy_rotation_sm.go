@@ -6,9 +6,9 @@ import (
 )
 
 const (
-	Idle State = iota
-	Active
-	Exhausted
+	UAIdle State = iota
+	UAActive
+	UAExhausted
 )
 
 type State int
@@ -18,6 +18,7 @@ type ProxyRotationSM struct {
 	proxyCount  int
 	proxyTick   time.Duration
 	currentProxy Proxy
+	userAgentPool UserAgentPoolInterface
 	mtx         sync.Mutex
 }
 
@@ -25,12 +26,17 @@ type ProxyRotatorInterface interface {
 	NextProxy() Proxy
 }
 
-func NewProxyRotationSM(initialProxy Proxy, count int, tick time.Duration) *ProxyRotationSM {
+type UserAgentPoolInterface interface {
+	NextUserAgent() string
+}
+
+func NewProxyRotationSM(initialProxy Proxy, count int, tick time.Duration, userAgentPool UserAgentPoolInterface) *ProxyRotationSM {
 	return &ProxyRotationSM{
-		state:      Idle,
-		proxyCount: count,
-		proxyTick:  tick,
+		state:        UAIdle,
+		proxyCount:   count,
+		proxyTick:    tick,
 		currentProxy: initialProxy,
+		userAgentPool: userAgentPool,
 	}
 }
 
@@ -60,22 +66,24 @@ func (s *ProxyRotationSM) GetProxy() Proxy {
 
 func (s *ProxyRotationSM) Rotate(proxyRotator ProxyRotatorInterface) {
 	switch s.state {
-	case Idle:
+	case UAIdle:
 		s.currentProxy = proxyRotator.NextProxy()
-		s.state = Active
+		s.currentProxy.UserAgent = s.userAgentPool.NextUserAgent()
+		s.state = UAActive
 		time.AfterFunc(s.proxyTick, func() {
 			s.Rotate(proxyRotator)
 		})
-	case Active:
+	case UAActive:
 		// Continue rotating every 'tick' duration
 		s.currentProxy = proxyRotator.NextProxy()
+		s.currentProxy.UserAgent = s.userAgentPool.NextUserAgent()
 		time.AfterFunc(s.proxyTick, func() {
 			s.Rotate(proxyRotator)
 		})
-	case Exhausted:
+	case UAExhausted:
 		// Optionally start rotating again after a delay
 		time.AfterFunc(5*time.Minute, func() {
-			s.state = Idle
+			s.state = UAIdle
 			s.Rotate(proxyRotator)
 		})
 	}
