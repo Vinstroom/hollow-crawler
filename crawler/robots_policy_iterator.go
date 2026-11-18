@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"errors"
+	"net/url"
 	"time"
 )
 
@@ -16,7 +17,7 @@ type RobotsPolicyIterator struct {
 	done       bool
 }
 
-// NewRobotsPolicyIterator creates an iterator over urls that respects
+// NewRobotsPolicyIterator creates an iterator over URLs that respects
 // the given policy and per-host politeness delay.
 func NewRobotsPolicyIterator(urls []string, policy *RobotsPolicy, delay time.Duration) *RobotsPolicyIterator {
 	return &RobotsPolicyIterator{
@@ -40,8 +41,8 @@ func (it *RobotsPolicyIterator) Next() (string, bool) {
 			continue
 		}
 
-		host := extractHost(u)
-		if host == "" {
+		host, err := extractHost(u)
+		if err != nil || host == "" {
 			continue
 		}
 
@@ -74,24 +75,13 @@ func (it *RobotsPolicyIterator) Err() error {
 	return nil
 }
 
-// extractHost is a minimal host extractor for URL strings.
-func extractHost(rawurl string) string {
-	// skip scheme
-	start := 0
-	if len(rawurl) > 7 && rawurl[:7] == "http://" {
-		start = 7
-	} else if len(rawurl) > 8 && rawurl[:8] == "https://" {
-		start = 8
-	} else {
-		return ""
+// extractHost extracts the host from a given URL string.
+func extractHost(rawurl string) (string, error) {
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return "", err
 	}
-	// find end of host
-	for i := start; i < len(rawurl); i++ {
-		if rawurl[i] == '/' || rawurl[i] == ':' || rawurl[i] == '?' || rawurl[i] == '#' {
-			return rawurl[start:i]
-		}
-	}
-	return rawurl[start:]
+	return u.Hostname(), nil
 }
 
 // RobotsPolicy is a minimal interface for robots.txt checks.
