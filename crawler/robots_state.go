@@ -8,15 +8,14 @@ import (
 // RobotsState tracks per-host politeness state for robots.txt compliance.
 type RobotsState struct {
 	mu            sync.Mutex
-	lastFetch     map[string]time.Time
-	crawlDelay    map[string]time.Duration
+	lastFetches   map[string][]time.Time // Use slice to store last N fetches for better average calculation
+	crawlDelays   map[string]time.Duration
 }
 
-// NewRobotsState creates a new RobotsState.
 func NewRobotsState() *RobotsState {
 	return &RobotsState{
-		lastFetch:  make(map[string]time.Time),
-		crawlDelay: make(map[string]time.Duration),
+		lastFetches:  make(map[string][]time.Time),
+		crawlDelays:  make(map[string]time.Duration),
 	}
 }
 
@@ -24,49 +23,59 @@ func NewRobotsState() *RobotsState {
 func (rs *RobotsState) SetCrawlDelay(host string, delay time.Duration) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	rs.crawlDelay[host] = delay
+	rs.crawlDelays[host] = delay
 }
 
 // CrawlDelay returns the crawl delay for a host, defaulting to zero.
 func (rs *RobotsState) CrawlDelay(host string) time.Duration {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	return rs.crawlDelay[host]
+	return rs.crawlDelays[host]
 }
 
 // RecordFetch records that a fetch happened for host at time t.
 func (rs *RobotsState) RecordFetch(host string, t time.Time) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	rs.lastFetch[host] = t
+	if len(rs.lastFetches[host]) >= 5 {
+		rs.lastFetches[host] = rs.lastFetches[host][1:]
+	}
+	rs.lastFetches[host] = append(rs.lastFetches[host], t)
 }
 
-// LastFetch returns the last fetch time for host, or the zero time.
-func (rs *RobotsState) LastFetch(host string) time.Time {
+// LastFetch returns the last fetch times for host, or an empty slice.
+func (rs *RobotsState) LastFetch(host string) []time.Time {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	return rs.lastFetch[host]
+	return rs.lastFetches[host]
 }
 
 // WaitDuration calculates how long to wait before the next allowed fetch for host.
+// Uses the average delay from the last N fetches (default 5) to smooth out short bursts.
 // Returns zero if immediate fetch is allowed.
 func (rs *RobotsState) WaitDuration(host string) time.Duration {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 
-	delay, ok := rs.crawlDelay[host]
+	delays, ok := rs.crawlDelays[host]
 	if !ok {
 		return 0
 	}
 
-	if last, ok := rs.lastFetch[host]; ok {
-		elapsed := time.Since(last)
-		if elapsed >= delay {
-			return 0
-		}
-		return delay - elapsed
+	fetches, ok := rs.lastFetches[host]
+	if !ok || len(fetches) < 2 {
+		return delays
 	}
 
-	// If there's no last fetch time, return the full crawl delay
-	return delay
+	totalDelay := time.Duration(0)
+	for i := 1; i < len(fetches); i++ {
+		totalDelay += fetches[i].Sub(fetches[i-1])
+	}
+
+	avgDelay := totalDelay / time.Duration(len(fetches)-1)
+	if time.Since(fetches[len(fetches)-1]) < avgDelay {
+		return avgDelay - time.Since(fetches[len(fetches)-1])
+	}
+
+	return 0
 }
