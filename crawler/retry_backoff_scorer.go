@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"fmt"
 	"math"
 	"time"
 )
@@ -10,9 +11,9 @@ import (
 // a float64 in the range [0, 1], where higher values indicate a more
 // favorable time to retry. The score balances waiting long enough to
 // respect backoff with not stalling progress unnecessarily.
-func RetryBackoffScore(attempt int, baseDelay, maxDelay time.Duration, elapsed time.Duration) float64 {
+func RetryBackoffScore(attempt int, baseDelay, maxDelay time.Duration, elapsed time.Duration) (score float64, progress string) {
 	if attempt < 0 || baseDelay <= 0 || maxDelay < baseDelay || elapsed < 0 {
-		return 0
+		return 0, "invalid input"
 	}
 
 	// Compute the exponential backoff for the current attempt.
@@ -23,15 +24,16 @@ func RetryBackoffScore(attempt int, baseDelay, maxDelay time.Duration, elapsed t
 
 	// If the minimum backoff hasn't elapsed, the score is 0.
 	if elapsed < baseDelay {
-		return 0
+		return 0, fmt.Sprintf("waiting for %v", baseDelay)
 	}
 
 	// If we've waited at least the full backoff, the score is 1.
 	if elapsed >= backoff {
-		return 1
+		return 1, fmt.Sprintf("ready to retry after %v", backoff)
 	}
 
 	// Otherwise, interpolate linearly between baseDelay and backoff.
 	progress := float64(elapsed-baseDelay) / float64(backoff-baseDelay)
-	return progress
+	score = progress
+	return score, fmt.Sprintf("progress: %.2f%%", progress*100)
 }
