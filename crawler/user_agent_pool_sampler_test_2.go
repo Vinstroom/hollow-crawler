@@ -1,6 +1,8 @@
 package crawler
 
 import (
+	"bytes"
+	"encoding/gob"
 	"math/rand"
 	"strings"
 	"testing"
@@ -210,5 +212,27 @@ func TestPickFromPoolZeroValueSampler(t *testing.T) {
 	result := s.PickFromPool([]string{"only"})
 	if result != "only" {
 		t.Fatalf("expected only, got %q", result)
+	}
+}
+
+// Add serialization support for UserAgentPoolSampler.
+func TestSerializeUserAgentPoolSampler(t *testing.T) {
+	s := NewUserAgentPoolSampler(42)
+	buffer := new(bytes.Buffer)
+	encoder := gob.NewEncoder(buffer)
+	err := encoder.Encode(s)
+	if err != nil {
+		t.Fatalf("failed to encode sampler: %v", err)
+	}
+
+	var decodedSampler UserAgentPoolSampler
+	decoder := gob.NewDecoder(buffer)
+	err = decoder.Decode(&decodedSampler)
+	if err != nil {
+		t.Fatalf("failed to decode sampler: %v", err)
+	}
+
+	if decodedSampler.rng.Int63() != s.rng.Int63() {
+		t.Fatal("serialized sampler has different random state")
 	}
 }
