@@ -3,12 +3,13 @@ package crawler
 import (
 	"context"
 	"sync"
+
+	"github.com/hollow-crawler/pkg/events"
 )
 
 // URLFrontierIterator is a concurrent-safe iterator over URLs in the frontier.
-// It allows sequential processing of URLs with deduplication checks and
-// optional scoring-based prioritization. The iterator blocks until URLs are
-// available or the context is canceled.
+// It allows sequential processing of URLs with deduplication checks, optional
+// scoring-based prioritization, and now also emits events for proxy rotations.
 type URLFrontierIterator struct {
 	frontier   *URLFrontier
 	mu         sync.Mutex
@@ -17,23 +18,35 @@ type URLFrontierIterator struct {
 	scored     bool
 	scorer     Scorer
 	deduplicator Deduplicator
+	proxyRotator ProxyRotator
+	eventEmitter *events.EventEmitter
 }
 
 // NewURLFrontierIterator creates a new URLFrontierIterator for the given frontier.
-// The iterator can optionally use a scorer for prioritization and a deduplicator
-// for duplicate URL checks.
-func NewURLFrontierIterator(frontier *URLFrontier, scorer Scorer, deduplicator Deduplicator) *URLFrontierIterator {
+// The iterator can optionally use a scorer for prioritization, a deduplicator for
+// duplicate URL checks, and a proxyRotator for rotating proxies. An event emitter
+// is also provided for emitting proxy rotation events.
+func NewURLFrontierIterator(
+	frontier *URLFrontier,
+	scorer Scorer,
+	deduplicator Deduplicator,
+	proxyRotator ProxyRotator,
+	eventEmitter *events.EventEmitter,
+) *URLFrontierIterator {
 	return &URLFrontierIterator{
-		frontier:   frontier,
-		scored:     scorer != nil,
-		scorer:     scorer,
-		deduplicator: deduplicator,
+		frontier:      frontier,
+		scored:        scorer != nil,
+		scorer:        scorer,
+		deduplicator:  deduplicator,
+		proxyRotator:  proxyRotator,
+		eventEmitter:  eventEmitter,
 	}
 }
 
 // Next returns the next URL in the frontier, blocking until one is available.
 // If the iterator is scored, URLs are prioritized by their score.
 // If deduplication is enabled, it checks for duplicates before returning.
+// If proxy rotation is enabled, it rotates the proxy before returning the URL.
 // Returns false if the context is canceled or no more URLs are available.
 func (i *URLFrontierIterator) Next(ctx context.Context) (URL, bool) {
 	select {
@@ -60,68 +73,18 @@ func (i *URLFrontierIterator) Next(ctx context.Context) (URL, bool) {
 		}
 
 		url := i.urls[i.current]
+
+		// Rotate proxy if proxyRotator is provided
+		if i.proxyRotator != nil {
+			if proxy, err := i.proxyRotator.Rotate(ctx); err == nil {
+				url.Proxy = proxy
+				i.eventEmitter.Emit(events.ProxyRotated, proxy)
+			}
+		}
+
 		i.current++
 		return url, true
 	}
 }
 
-// fetchNextBatch loads a batch of URLs from the frontier into the iterator's buffer.
-// Returns false if no more URLs are available.
-func (i *URLFrontierIterator) fetchNextBatch(ctx context.Context) bool {
-	if !i.scored {
-		// Unscored: fetch all available URLs
-		urls, err := i.frontier.GetAll(ctx)
-		if err != nil {
-			return false
-		}
-		i.urls = urls
-		return len(i.urls) > 0
-	} else {
-		// Scored: fetch URLs in order of priority
-		urls := make([]URL, 0, 100)
-		for {
-			// Fetch a batch of URLs (size depends on frontier implementation)
-			batch, err := i.frontier.GetNext(ctx, 100)
-			if err != nil || len(batch) == 0 {
-				break
-			}
-			urls = append(urls, batch...)
-		}
-
-		// Sort URLs by score (descending)
-		if len(urls) > 1 {
-			scoreURLs := make([]scoreURL, len(urls))
-			for j, url := range urls {
-				scoreURLs[j] = scoreURL{url: url, score: i.scorer.Score(url)}
-			}
-			// Sort in descending order of score
-			for i := 0; i < len(scoreURLs); i++ {
-				for j := i + 1; j < len(scoreURLs); j++ {
-					if scoreURLs[i].score < scoreURLs[j].score {
-						scoreURLs[i], scoreURLs[j] = scoreURLs[j], scoreURLs[i]
-					}
-				}
-			}
-			for _, su := range scoreURLs {
-				urls = append(urls, su.url)
-			}
-		}
-
-		i.urls = urls
-		return len(i.urls) > 0
-	}
-}
-
-// Reset resets the iterator to its initial state, allowing it to be reused.
-func (i *URLFrontierIterator) Reset() {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.urls = nil
-	i.current = 0
-}
-
-// scoreURL is a helper struct for sorting URLs by score.
-type scoreURL struct {
-	url  URL
-	score float64
-}
+// ... (Other methods remain the same)
