@@ -39,6 +39,12 @@ func RetryBackoff[R any, E error](f func() (R, E), config RetryBackoffConfig) (R
 	return result, &RetryBackoffError{Err: err, Attempt: config.MaxAttempts}
 }
 
+// calculateBackoffTime calculates the backoff time for the given attempt using the provided config.
+// It ensures the backoff time does not exceed the maximum backoff time.
 func calculateBackoffTime(config RetryBackoffConfig, attempt int) time.Duration {
-	return time.Duration(float64(config.MinBackoffTime) * math.Pow(float64(config.BackoffFactor), float64(attempt-1)))
+	backoffTime := time.Duration(float64(config.MinBackoffTime) * math.Pow(float64(config.BackoffFactor), float64(attempt-1)))
+	if backoffTime > config.MaxBackoffTime {
+		return config.MaxBackoffTime
+	}
+	return backoffTime
 }
