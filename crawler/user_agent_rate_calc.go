@@ -9,14 +9,15 @@ import (
 // and reports the requests per second for each agent in the pool.
 type UserAgentThroughputCalculator struct {
 	mu             sync.Mutex
-	agentsThroughput map[string]throughputRecord
+	agentsThroughput map[string]agentThroughput
 	interval       time.Duration // sliding window duration
 }
 
-type throughputRecord struct {
-	total        int
-	lastUpdated  int64 // unix second of last update
-	throughput   float64
+// agentThroughput holds the total requests, last updated time, and requests per second for a user-agent.
+type agentThroughput struct {
+	total      int
+	lastUpdate int64 // unix second of last update
+	rate       float64
 }
 
 // NewUserAgentThroughputCalculator creates a calculator with the given sliding window interval.
@@ -26,7 +27,7 @@ func NewUserAgentThroughputCalculator(interval time.Duration) *UserAgentThroughp
 		interval = time.Second
 	}
 	return &UserAgentThroughputCalculator{
-		agentsThroughput: make(map[string]throughputRecord),
+		agentsThroughput: make(map[string]agentThroughput),
 		interval:         interval,
 	}
 }
@@ -39,13 +40,13 @@ func (c *UserAgentThroughputCalculator) IncrementRequest(agent string) {
 	now := time.Now().Unix()
 	record, ok := c.agentsThroughput[agent]
 	if !ok {
-		c.agentsThroughput[agent] = throughputRecord{total: 1, lastUpdated: now}
+		c.agentsThroughput[agent] = agentThroughput{total: 1, lastUpdate: now}
 		return
 	}
 	record.total++
-	if now != record.lastUpdated {
-		record.lastUpdated = now
-		record.throughput = float64(record.total) / float64(now-record.lastUpdated)
+	if now-record.lastUpdate >= int64(c.interval.Seconds()) {
+		record.rate = float64(record.total) / float64(now-record.lastUpdate)
+		record.lastUpdate = now
 	}
 }
 
@@ -59,7 +60,7 @@ func (c *UserAgentThroughputCalculator) Throughput(agent string) float64 {
 	if !ok {
 		return 0
 	}
-	return record.throughput
+	return record.rate
 }
 
 // AllThroughputs returns a map of agent -> requests per second for all tracked agents.
@@ -69,7 +70,7 @@ func (c *UserAgentThroughputCalculator) AllThroughputs() map[string]float64 {
 
 	out := make(map[string]float64, len(c.agentsThroughput))
 	for agent, record := range c.agentsThroughput {
-		out[agent] = record.throughput
+		out[agent] = record.rate
 	}
 	return out
 }
@@ -78,5 +79,6 @@ func (c *UserAgentThroughputCalculator) AllThroughputs() map[string]float64 {
 func (c *UserAgentThroughputCalculator) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.agentsThroughput = make(map[string]throughputRecord)
+	c.agentsThroughput = make(map[string]agentThroughput)
 }
+```
